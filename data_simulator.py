@@ -1,17 +1,14 @@
 import numpy as np
-import random
+import pandas as pd
 
 def generate_sensor_data():
-    # 20% chance of anomaly
-    if random.random() < 0.2:
-        return {
-            "pH": np.random.uniform(9.5, 11),     # extreme
-            "TDS": np.random.randint(900, 1500),  # extreme
-            "Turbidity": np.random.uniform(7, 12) # extreme
-        }
-    else:
-        return {
-            "pH": np.round(np.random.uniform(6.5, 8.5), 2),
-            "TDS": np.random.randint(100, 500),
-            "Turbidity": np.round(np.random.uniform(0.5, 4.5), 2)
-        }
+    return {
+        "pH": np.round(np.random.uniform(6.0, 9.5), 2),
+        "TDS": np.random.randint(100, 800),
+        "Turbidity": np.round(np.random.uniform(0.5, 8.0), 2)
+    }
+
+def update_buffer(df):
+    new_data = generate_sensor_data()
+    df = pd.concat([df, pd.DataFrame([new_data])]).tail(50)
+    return df

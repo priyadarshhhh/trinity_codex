@@ -1,69 +1,18 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import time
 import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
-import random
 
-def load_global_data():
-    try:
-        # Try tab first
-        df = pd.read_csv("data/water_potability.csv", sep="\t")
+# Import custom modules
+from data_simulator import update_buffer
+from utils import check_anomaly, calculate_risk, classify_contamination
 
-        # If still one column → try comma
-        if len(df.columns) == 1:
-            df = pd.read_csv("data/water_potability.csv", sep=",")
-
-        # Rename columns
-        df = df.rename(columns={
-            "ph": "pH",
-            "Solids": "TDS",
-            "Turbidity": "Turbidity"
-        })
-
-        df = df[["pH", "TDS", "Turbidity"]]
-
-        df = df.fillna(df.mean(numeric_only=True))
-
-        return df.tail(50)
-
-    except Exception as e:
-        st.error(f"Error loading dataset: {e}")
-        return pd.DataFrame()
-# ML imports
-from ml_model import train_model, detect_anomalies
-from ai_engine import eco_bot_response
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Trinity Codex – Water Intelligence System", layout="wide")
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(rgba(5,10,20,0.95), rgba(5,10,20,0.95));
-    color: #EAEAEA;
-}
 
-h1, h2, h3 {
-    color: #FFD166;
-}
-
-[data-testid="metric-container"] {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,209,102,0.3);
-    padding: 15px;
-    border-radius: 12px;
-}
-
-.stButton>button {
-    background-color: #FFD166;
-    color: black;
-    border-radius: 8px;
-    font-weight: bold;
-}
-</style>
-""", unsafe_allow_html=True)
-# --- THEME ---
+# --- DARK THEME ---
 st.markdown("""
     <style>
     .stApp {
@@ -74,45 +23,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- DATA SIMULATION (WITH ANOMALIES) ---
-def generate_sensor_data():
-    # 20% anomaly chance
-    if random.random() < 0.2:
-        return {
-            "pH": np.random.uniform(9.5, 11),
-            "TDS": np.random.randint(900, 1500),
-            "Turbidity": np.random.uniform(7, 12)
-        }
-    else:
-        return {
-            "pH": np.round(np.random.uniform(6.5, 8.5), 2),
-            "TDS": np.random.randint(100, 500),
-            "Turbidity": np.round(np.random.uniform(0.5, 4.5), 2)
-        }
-
-def update_buffer(df):
-    new_data = generate_sensor_data()
-    df = pd.concat([df, pd.DataFrame([new_data])]).tail(50)
-    return df
-
 # --- SESSION STATE ---
 if "data" not in st.session_state:
     st.session_state.data = pd.DataFrame(columns=["pH", "TDS", "Turbidity"])
-if "alerts" not in st.session_state:
-    st.session_state.alerts = []
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-# =========================================================
-# 🚨 SOS ALERT SYSTEM STATE
-# =========================================================
-
-ESCALATION_LEVELS = {
-    1: "Local Water Team",
-    2: "Panchayat Officer",
-    3: "Taluk Tehsildar",
-    4: "District Collector"
-}
 # --- SIDEBAR ---
 st.sidebar.title("🛡️ TRINITY CODEX")
 menu = st.sidebar.radio("Navigation", [
@@ -121,285 +35,71 @@ menu = st.sidebar.radio("Navigation", [
     "Analytics & AI Insights",
     "Eco-Bot & SOS"
 ])
-# =========================================================
-# ⏳ ESCALATION ENGINE
-# =========================================================
-def update_escalation():
-    current_time = time.time()
 
-    for alert in st.session_state.alerts:
-        if not alert["acknowledged"]:
-            elapsed = current_time - alert["timestamp"]
-
-            # Simulated escalation timing
-            if elapsed > 30:
-                alert["level"] = 4
-                alert["status"] = "Critical"
-            elif elapsed > 20:
-                alert["level"] = 3
-                alert["status"] = "Escalated"
-            elif elapsed > 10:
-                alert["level"] = 2
-                alert["status"] = "Warning"
-            else:
-                alert["level"] = 1
-                alert["status"] = "No Response"
 # =========================================================
-# 🧪 HOME & MONITOR
+# 🧪 SECTION 1: REAL-TIME MONITORING
 # =========================================================
 if menu == "Home & Monitor":
-
     st.title("🚰 Real-Time Water Quality Network")
-    st.markdown("## 🧠 Trinity Codex – Water Intelligence Command Center")
-    st.caption("Real-time monitoring | ML detection | AI insights | Governance escalation")
 
-    start_time = time.time()
-
-    # =========================================================
-    # 🔄 UPDATE LOCAL DATA
-    # =========================================================
+    # Update real-time buffer
     st.session_state.data = update_buffer(st.session_state.data)
-    update_escalation()  # ✅ FIX: ensure escalation runs
 
-    # =========================================================
-    # 🤖 LOCAL ML
-    # =========================================================
-    model = train_model(st.session_state.data)
-    st.session_state.data = detect_anomalies(st.session_state.data, model)
+    latest = st.session_state.data.iloc[-1]
+    ph, tds, turb = latest["pH"], latest["TDS"], latest["Turbidity"]
 
-    if "anomaly" not in st.session_state.data.columns:
-        st.session_state.data["anomaly"] = 1
+    # --- ANOMALY CHECK ---
+    anomalies = check_anomaly(ph, tds, turb)
 
-    # =========================================================
-    # 🌍 GLOBAL DATA + ML
-    # =========================================================
-    global_df = load_global_data()
+    # --- METRICS ---
+    col1, col2, col3 = st.columns(3)
 
-    if not global_df.empty:
-        global_model = train_model(global_df)
-        global_df = detect_anomalies(global_df, global_model)
+    with col1:
+        st.metric("pH Level", ph,
+                  delta="ANOMALY" if anomalies["ph"] else "Safe",
+                  delta_color="inverse" if anomalies["ph"] else "normal")
 
-        if "anomaly" not in global_df.columns:
-            global_df["anomaly"] = 1
+    with col2:
+        st.metric("TDS (mg/L)", tds,
+                  delta="HIGH" if anomalies["tds"] else "Safe",
+                  delta_color="inverse" if anomalies["tds"] else "normal")
 
-        global_latest = global_df.iloc[-1]
-        g_ph, g_tds, g_turb = (
-            global_latest["pH"],
-            global_latest["TDS"],
-            global_latest["Turbidity"]
-        )
+    with col3:
+        st.metric("Turbidity (NTU)", turb,
+                  delta="SPIKE" if anomalies["turb"] else "Safe",
+                  delta_color="inverse" if anomalies["turb"] else "normal")
 
-    # =========================================================
-    # 🌍 GLOBAL METRICS
-    # =========================================================
-    st.subheader("🌍 Global Water Quality (Kaggle Dataset)")
+    # --- RISK SCORE ---
+    risk_score = calculate_risk(ph, tds, turb)
+    st.metric("⚠️ Risk Score", round(risk_score, 2))
 
-    if not global_df.empty:
-        col1, col2, col3 = st.columns(3)
+    # --- CLASSIFICATION ---
+    cont_type, confidence = classify_contamination(ph, tds, turb)
+    st.info(f"🧪 Contamination Type: {cont_type} ({int(confidence*100)}% confidence)")
 
-        col1.metric("Global pH", round(g_ph, 2))
-        col2.metric("Global TDS", int(g_tds))
-        col3.metric("Global Turbidity", round(g_turb, 2))
-
-        if global_latest.get("anomaly", 1) == -1:
-            st.error("🌍 Global Anomaly Detected")
-        else:
-            st.success("🌍 Global Data Normal")
-    else:
-        st.warning("Global dataset not loaded")
-
-    # =========================================================
-    # 🌍 GLOBAL TREND CHART
-    # =========================================================
-    if not global_df.empty:
-        st.subheader("🌍 Global Water Trends (Kaggle Dataset)")
-
-        fig_global = go.Figure()
-        fig_global.add_trace(go.Scatter(y=global_df["pH"], name="Global pH"))
-        fig_global.add_trace(go.Scatter(y=global_df["TDS"], name="Global TDS"))
-        fig_global.add_trace(go.Scatter(y=global_df["Turbidity"], name="Global Turbidity"))
-
-        global_anomalies = global_df[global_df["anomaly"] == -1]
-
-        fig_global.add_trace(go.Scatter(
-            y=global_anomalies["TDS"],
-            mode="markers",
-            name="Global Anomaly",
-            marker=dict(size=10, symbol="x")
-        ))
-
-        st.plotly_chart(fig_global, use_container_width=True)
-
-    # =========================================================
-    # 🧠 AI COMPARISON INSIGHT (✅ NOW FIXED SCOPE)
-    # =========================================================
-    if not global_df.empty and not st.session_state.data.empty:
-
-        global_avg = global_df.mean()
-        local_avg = st.session_state.data.mean()
-
-        insight = f"""
-🌍 Global vs Local Insight:
-
-Local TDS: {round(local_avg['TDS'],2)} vs Global: {round(global_avg['TDS'],2)}  
-Local Turbidity: {round(local_avg['Turbidity'],2)} vs Global: {round(global_avg['Turbidity'],2)}
-
-⚠️ Local water shows {'higher' if local_avg['TDS'] > global_avg['TDS'] else 'lower'} contamination compared to global trends.
-"""
-        st.warning(insight)
-
-    # =========================================================
-    # 🧪 LOCAL DATA
-    # =========================================================
-    if not st.session_state.data.empty:
-        latest = st.session_state.data.iloc[-1]
-        ph, tds, turb = latest["pH"], latest["TDS"], latest["Turbidity"]
-    else:
-        st.warning("No data yet")
-        st.stop()
-
-    # =========================================================
-    # 🚨 ML ALERT + SOS TRIGGER
-    # =========================================================
-    latest_flag = latest.get("anomaly", 1)
-
-    if latest_flag == -1 and (
-        len(st.session_state.alerts) == 0 or
-        not st.session_state.alerts[-1]["acknowledged"]
-    ):
-        st.error("🚨 ML DETECTED ANOMALY!")
-
-        alert = {
-            "timestamp": time.time(),
-            "pH": ph,
-            "TDS": tds,
-            "Turbidity": turb,
-            "status": "No Response",
-            "level": 1,
-            "acknowledged": False
-        }
-
-        st.session_state.alerts.append(alert)
-
-    else:
-        st.success("✅ Normal system behavior")
-
-    # =========================================================
-    # 🚨 ALERT STATUS PANEL
-    # =========================================================
-    st.subheader("🚨 Active Alerts & Escalation")
-
-    if st.session_state.alerts:
-        latest_alert = st.session_state.alerts[-1]
-
-        level = latest_alert["level"]
-        authority = ESCALATION_LEVELS[level]
-        status = latest_alert["status"]
-
-        if level == 4:
-            st.error(f"Level {level}: {authority} | Status: {status}")
-        elif level >= 2:
-            st.warning(f"Level {level}: {authority} | Status: {status}")
-        else:
-            st.info(f"Level {level}: {authority} | Status: {status}")
-
-        # Acknowledge button
-        if not latest_alert["acknowledged"]:
-            if st.button("✅ Acknowledge Alert"):
-                latest_alert["acknowledged"] = True
-                latest_alert["status"] = "Resolved"
-                st.success("Alert acknowledged. Escalation stopped.")
-    else:
-        st.success("No active alerts")
-        # =========================================================
-    # 💬 COMMUNITY INTERACTION PANEL
-    # =========================================================
-    st.subheader("💬 Community Interaction Panel")
-
-    # --- MESSAGE INPUT ---
-    user_msg = st.text_input("Send update or report:")
-
-    if st.button("Send Message"):
-        if user_msg:
-            st.session_state.messages.append({
-                "time": time.strftime("%H:%M:%S"),
-                "message": user_msg
-            })
-            st.success("Message sent")
-
-    # --- STATUS UPDATE ---
-    status_options = [
-        "No Response",
-        "Team Dispatched",
-        "Under Investigation",
-        "Resolved"
-    ]
-
-    if st.session_state.alerts:
-        latest_alert = st.session_state.alerts[-1]
-
-        new_status = st.selectbox("Update Status", status_options)
-
-        if st.button("Update Alert Status"):
-            latest_alert["status"] = new_status
-
-            if new_status == "Resolved":
-                latest_alert["acknowledged"] = True
-
-            st.success("Status updated")
-
-    # --- MESSAGE HISTORY ---
-    st.subheader("📜 Message History")
-
-    if st.session_state.messages:
-        for msg in reversed(st.session_state.messages[-5:]):
-            st.info(f"{msg['time']} - {msg['message']}")
-    else:
-        st.write("No messages yet")
-    # =========================================================
-    # ⚡ LATENCY
-    # =========================================================
-    latency = time.time() - start_time
-    st.metric("⚡ Alert Latency (s)", round(latency, 4))
-
-    # =========================================================
-    # 📈 CHART
-    # =========================================================
+    # --- LIVE CHART ---
     st.subheader("📊 Live Sensor Trends")
 
-    df = st.session_state.data
-
     fig = go.Figure()
-    fig.add_trace(go.Scatter(y=df["pH"], name="pH"))
-    fig.add_trace(go.Scatter(y=df["TDS"], name="TDS"))
-    fig.add_trace(go.Scatter(y=df["Turbidity"], name="Turbidity"))
 
-    anomalies = df[df["anomaly"] == -1]
-
-    fig.add_trace(go.Scatter(
-        y=anomalies["TDS"],
-        mode="markers",
-        name="Anomaly",
-        marker=dict(size=10, symbol="x")
-    ))
+    fig.add_trace(go.Scatter(y=st.session_state.data["pH"], name="pH"))
+    fig.add_trace(go.Scatter(y=st.session_state.data["TDS"], name="TDS"))
+    fig.add_trace(go.Scatter(y=st.session_state.data["Turbidity"], name="Turbidity"))
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # =========================================================
-    # 🔁 REFRESH LOOP
-    # =========================================================
+    # Auto refresh
     time.sleep(2)
     st.rerun()
 
 # =========================================================
-# 🌍 GEO MAP
+# 🌍 SECTION 2: GEO MAP
 # =========================================================
 elif menu == "Geo-Tagged Map":
     st.header("📍 Contamination Zone Mapping")
 
     m = folium.Map(location=[10.8505, 78.7047], zoom_start=13, tiles="CartoDB dark_matter")
 
-    # --- SENSOR POINTS ---
     sensor_points = [
         {"lat": 10.85, "lon": 78.70, "risk": "high"},
         {"lat": 10.86, "lon": 78.71, "risk": "medium"},
@@ -417,103 +117,61 @@ elif menu == "Geo-Tagged Map":
             popup=f"Risk: {s['risk']}"
         ).add_to(m)
 
-    # --- DYNAMIC RADIUS ---
-    if "data" in st.session_state and not st.session_state.data.empty:
-        latest = st.session_state.data.iloc[-1]
-        ph, tds, turb = latest["pH"], latest["TDS"], latest["Turbidity"]
-
-        risk_score = (tds/500) + (turb/5) + abs(ph - 7)
-        radius = 300 + (risk_score * 200)
-    else:
-        radius = 400
-    if radius > 700:
-        zone_color = "red"
-    elif radius > 500:
-        zone_color = "orange"
-    else:
-        zone_color = "green"
-
-    # --- AFFECTED ZONE ---
     folium.Circle(
         location=[10.8505, 78.7047],
-        radius=radius,
-        color=zone_color,
+        radius=600,
+        color="red",
         fill=True,
         opacity=0.3
     ).add_to(m)
 
     st_folium(m, width=1000, height=500)
-
-# =========================================================
-# 📊 ANALYTICS
-# =========================================================
-
 elif menu == "Analytics & AI Insights":
     st.header("📊 Data Analytics & AI Insights")
 
-    # --- CHECK DATA ---
     if "data" not in st.session_state or st.session_state.data.empty:
         st.warning("No data available. Go to Home & Monitor first.")
     else:
         df = st.session_state.data.copy()
 
         # =========================
-        # 📊 PERFORMANCE METRICS
-        # =========================
-        st.subheader("📈 Model Performance Metrics")
-
-        precision = 0.91
-        recall = 0.88
-        false_alert_rate = 2.1
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Precision", precision)
-        col2.metric("Recall", recall)
-        col3.metric("False Alerts / 1000", false_alert_rate)
-
-        # =========================
-        # 🔗 CORRELATION HEATMAP
+        # 📈 CORRELATION HEATMAP
         # =========================
         st.subheader("🔗 Correlation Heatmap")
 
-        try:
-            import plotly.express as px
-            corr = df[["pH", "TDS", "Turbidity"]].corr()
+        corr = df.corr()
 
-            fig = px.imshow(
-                corr,
-                text_auto=True,
-                color_continuous_scale="RdBu"
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-        except Exception as e:
-            st.warning("Correlation heatmap not available")
+        import plotly.express as px
+        fig = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu")
+        st.plotly_chart(fig, use_container_width=True)
 
         # =========================
-        # ⚠️ ANOMALY ANALYSIS
+        # 📊 ANOMALY DETECTION
         # =========================
-        st.subheader("⚠️ Anomaly Distribution")
+        st.subheader("⚠️ Anomaly Frequency")
 
-        if "anomaly" in df.columns:
-            counts = df["anomaly"].value_counts()
-            st.bar_chart(counts)
-        else:
-            st.warning("No anomaly data yet")
+        df["ph_anomaly"] = (df["pH"] < 6.5) | (df["pH"] > 8.5)
+        df["tds_anomaly"] = df["TDS"] > 500
+        df["turb_anomaly"] = df["Turbidity"] > 5
+
+        anomaly_count = {
+            "pH": df["ph_anomaly"].sum(),
+            "TDS": df["tds_anomaly"].sum(),
+            "Turbidity": df["turb_anomaly"].sum()
+        }
+
+        st.bar_chart(anomaly_count)
 
         # =========================
         # 🧪 CONTAMINANT DISTRIBUTION
         # =========================
-        st.subheader("🧪 Contaminant Classification")
+        st.subheader("🧪 Contaminant Distribution")
 
         def classify(row):
             if row["TDS"] > 500:
                 return "Chemical"
             elif row["Turbidity"] > 5:
                 return "Physical"
-            elif row["pH"] < 6.5:
-                return "Biological"
             else:
                 return "Safe"
 
@@ -523,67 +181,83 @@ elif menu == "Analytics & AI Insights":
         st.bar_chart(dist)
 
         # =========================
-        # 🧠 AI-STYLE INSIGHT SUMMARY (RULE-BASED)
+        # 🧠 AI INSIGHT ENGINE
         # =========================
-        st.subheader("🧠 Insight Summary")
+        st.subheader("🧠 AI Insight Summary")
 
         insights = []
 
+        # Trend detection
         if len(df) > 10:
             if df["TDS"].iloc[-1] > df["TDS"].iloc[0]:
-                insights.append("📈 TDS levels are increasing over time.")
+                insights.append("📈 TDS levels are showing an increasing trend.")
 
             if df["Turbidity"].mean() > 4:
                 insights.append("🌫️ Turbidity levels are consistently high.")
 
             if df["pH"].mean() > 8:
-                insights.append("⚗️ Water shows alkaline trend.")
+                insights.append("⚗️ Water is tending towards alkaline conditions.")
 
-        if "anomaly" in df.columns:
-            anomaly_rate = (df["anomaly"] == -1).sum() / len(df)
+        # Risk pattern
+        high_risk = ((df["TDS"] > 500) | (df["Turbidity"] > 5)).sum()
 
-            if anomaly_rate > 0.2:
-                insights.append("🚨 High anomaly frequency detected.")
+        if high_risk > len(df) * 0.3:
+            insights.append("🚨 High frequency of contamination detected.")
 
+        # Final output
         if insights:
             for i in insights:
                 st.info(i)
         else:
-            st.success("✅ System stable. No major risks detected.")
+            st.success("✅ System stable. No major risk patterns detected.")
 
 # =========================================================
-# 🤖 ECO BOT + SOS
+# 🤖 SECTION 3: ECO BOT + SOS
 # =========================================================
 elif menu == "Eco-Bot & SOS":
-    st.header("🤖 Eco Bot + SOS")
+    st.header("🤖 Eco-Redemption Bot & Emergency System")
 
-    tab1, tab2 = st.tabs(["Chatbot", "SOS"])
+    tab1, tab2 = st.tabs(["Eco Bot", "SOS System"])
 
-    # --- CHATBOT ---
+    # --- ECO BOT ---
     with tab1:
-        if "chat" not in st.session_state:
-            st.session_state.chat = []
+        st.subheader("🌱 Sustainable Solutions")
 
-        for msg in st.session_state.chat:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+        contaminant = st.selectbox("Select Contamination Type", ["Chemical", "Biological", "Physical"])
 
-        user_input = st.chat_input("Ask about water contamination...")
-
-        if user_input:
-            st.session_state.chat.append({"role": "user", "content": user_input})
-
-            if not st.session_state.data.empty:
-                latest = st.session_state.data.iloc[-1]
-                with st.spinner("🤖 Eco-Bot is thinking..."):
-                    response = eco_bot_response(user_input, latest)
+        if st.button("Get Solution"):
+            if contaminant == "Chemical":
+                st.success("Use biofilters with Prosopis juliflora to absorb heavy metals.")
+            elif contaminant == "Biological":
+                st.success("Apply UV or chlorination treatment.")
             else:
-                response = "No sensor data available yet."
+                st.success("Use sedimentation and filtration techniques.")
 
-            st.session_state.chat.append({"role": "assistant", "content": response})
-            st.rerun()
-
-    # --- SOS ---
+    # --- SOS SYSTEM ---
     with tab2:
-        if st.button("🚨 Trigger SOS"):
-            st.error("🚨 Alert sent to affected residents")
+        st.subheader("🚨 Emergency SOS")
+
+        phone = st.text_input("Register Phone Number")
+
+        if st.button("Register"):
+            st.toast(f"{phone} registered for alerts")
+
+        st.divider()
+
+        if st.button("🚨 AUTO SOS CHECK"):
+            # Use latest data for real logic
+            if "data" in st.session_state and not st.session_state.data.empty:
+                latest = st.session_state.data.iloc[-1]
+                ph, tds = latest["pH"], latest["TDS"]
+
+                if ph > 9 or tds > 1000:
+                    with st.status("Triggering SOS..."):
+                        time.sleep(1)
+                        st.write("Identifying affected residents...")
+                        time.sleep(1)
+                        st.write("Sending alerts...")
+                    st.error("🚨 ALERT SENT to 1,245 residents")
+                else:
+                    st.success("System stable — no alert needed")
+            else:
+                st.warning("No data available yet. Visit Home & Monitor first.")
