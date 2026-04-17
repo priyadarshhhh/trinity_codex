@@ -194,5 +194,7 @@ Combines AI + ML + Geo + Systems Design
 
 This project is licensed under the MIT License.
 
+deployed web link: https://trinitycodex-6uzccbzyeh3t3ootlbxvbw.streamlit.app/
+
 
 
